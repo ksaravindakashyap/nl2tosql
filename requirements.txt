@@ -1,0 +1,13 @@
+# Project dependencies for Phase 1 NL2SQL
+langchain>=0.2.0,<0.3
+langchain-google-genai>=1.0.0,<2.0
+langchain-community>=0.2.0,<0.3
+langchain-experimental>=0.0.50,<0.1
+langchain-openai>=0.1.0,<0.2
+google-generativeai
+chromadb
+sqlalchemy
+pandas>=2.2.0
+gradio
+# sqlite3 is included in the Python standard library
+# If you use a different embedding package, adjust accordingly
