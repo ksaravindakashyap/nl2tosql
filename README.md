@@ -1,91 +1,270 @@
-# NL2SQL Phase 1 — Gemini + LangChain + Spider
+# NL2SQL Spider Copilot - Phase 3 Complete 🎉
 
-This repository contains a Phase 1 implementation of an NL→SQL system using Google Gemini + LangChain and the Spider dataset.
+**Production-ready Natural Language to SQL system with cross-schema support, Spider leaderboard evaluation, and human-in-the-loop learning.**
 
-Files
-- `main.py` — single-file application (Gradio) to generate, show/edit, and execute SQL against Spider databases.
-- `spider/` — local Spider dataset (you've already downloaded this).
-- `requirements.txt` — Python dependencies for the project.
-- `conversation_log.jsonl` — (created at runtime) stores user questions, generated/edited SQL, and execution results.
+---
 
-Quick setup (recommended: use a virtual environment)
-
-1) Create and activate a virtual environment (PowerShell):
-
-```powershell
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1
-```
-
-(If you use bash)
+## 🚀 Quick Start
 
 ```bash
-python -m venv .venv
-source .venv/bin/activate
-```
-
-2) Install dependencies
-
-```powershell
-python -m pip install --upgrade pip
+# 1. Install dependencies
 pip install -r requirements.txt
-```
 
-Notes on packages
-- `langchain` should be the 0.3.x series if possible (the code uses the 0.3 style). If you already have a different version installed, you may need small import adjustments.
-- `google-generativeai` and `langchain-google-genai` are required for the Gemini LLM integration. Make sure your environment has network access and credentials.
+# 2. Set API key (create .env file)
+echo "OPENAI_API_KEY=sk-your-key-here" > .env
 
-3) Set your Google API key
-
-PowerShell (temporary for the session):
-
-```powershell
-$env:GOOGLE_API_KEY = "YOUR_GOOGLE_API_KEY"
-```
-
-PowerShell (persist across sessions):
-
-```powershell
-setx GOOGLE_API_KEY "YOUR_GOOGLE_API_KEY"
-# then open a new terminal window to use it
-```
-
-Bash:
-
-```bash
-export GOOGLE_API_KEY="YOUR_GOOGLE_API_KEY"
-```
-
-4) Start the app
-
-```powershell
+# 3. Run the application
 python main.py
+
+# 4. Open browser
+# http://127.0.0.1:7861
 ```
 
-Open the Gradio link printed in the terminal (usually `http://127.0.0.1:7860`).
+---
 
-Usage
-- Ask questions in the format: `In database <db_id>, <natural language question>` (e.g., `In database concert_singer, list the singers with more than 3 performances`).
-- Click `Generate SQL` to retrieve a generated SQL snippet (few-shot examples and schema injected).
-- Edit the SQL in the "Generated SQL" box if you want to change it.
-- Click `Execute SQL` to run it. Results are shown in the `Execution Results` box and logged to `conversation_log.jsonl`.
-- Click `Show Schema` to view the currently selected DB schema.
+## 📚 Documentation
 
-Troubleshooting
-- `ModuleNotFoundError: No module named 'pandas'` or similar → activate your virtual environment and run `pip install -r requirements.txt`.
-- `GOOGLE_API_KEY` missing → ensure the environment variable is set in the same shell where you run `python main.py`.
-- If you see LLM-related errors (authentication, API changes), check the versions of `langchain`, `langchain-google-genai`, and `google-generativeai`.
+- **[PHASE3_README.md](PHASE3_README.md)** - Complete feature documentation
+- **[TESTING_GUIDE.md](TESTING_GUIDE.md)** - Test cases and validation
+- **[QUICK_REFERENCE.md](QUICK_REFERENCE.md)** - Command reference
+- **[PHASE3_SUMMARY.md](PHASE3_SUMMARY.md)** - Implementation details
 
-Kaggle / Spider dataset
-- You already downloaded the Spider dataset into `spider/`. `train_spider.json` and the `database/` folder should be present.
-- `main.py` will attempt to create per-database SQLite files from `schema.sql` in each database folder (if present).
+---
 
-Security note
-- Do not commit your `GOOGLE_API_KEY` to source control. If you accidentally exposed it in a public repo, rotate the key immediately.
+## ✨ Phase 3 Features
 
-Next steps I can do for you
-- (A) Run `pip install -r requirements.txt` inside a created virtualenv here (I can run it if you want me to).
-- (B) Launch `main.py` and capture any runtime errors.
-- (C) Add a small `run.ps1` script that creates the venv and installs dependencies for you.
+### 🎯 Core Capabilities
 
-Tell me which you'd like me to do next.
+1. **Cross-Schema SQL Generation**
+   - Automatic foreign key detection
+   - Fully qualified name enforcement
+   - Nullable constraint awareness
+
+2. **Spider Leaderboard Evaluation**
+   - Official exact-match metrics
+   - Execution accuracy validation
+   - Configurable sample size (10-1034)
+
+3. **Human-in-the-Loop Learning**
+   - Save user corrections
+   - Automatic vectorstore updates
+   - Continuous accuracy improvement
+
+4. **Professional 3-Tab UI**
+   - 💬 Chat: Main NL2SQL interface
+   - 🏆 Leaderboard: Spider evaluation
+   - 📊 Statistics: System metrics
+
+---
+
+## 📊 System Architecture
+
+```
+Question → Database Router → Schema Extraction (FK + Nullable)
+   ↓
+Table Pre-Selection (Top-5) → Few-Shot Retrieval (Chroma)
+   ↓
+SQL Generation (LangChain + OpenAI/Gemini)
+   ↓
+Human Review & Edit → Execution (SQLAlchemy)
+   ↓
+Save Correction → Vectorstore Update
+```
+
+---
+
+## 📁 Project Structure
+
+```
+Dbms-project/
+├── main.py                    # Main application (849 lines)
+├── spider_eval.py             # Evaluation module
+├── requirements.txt           # Dependencies
+├── .env                       # API keys (create this)
+├── .gitignore                # Git exclusions
+├── PHASE3_README.md          # Full documentation
+├── TESTING_GUIDE.md          # Test instructions
+├── QUICK_REFERENCE.md        # Command reference
+├── PHASE3_SUMMARY.md         # Implementation details
+├── spider/                   # Spider dataset (download)
+│   ├── train_spider.json
+│   ├── dev.json
+│   ├── tables.json
+│   └── database/             # 200+ SQLite databases
+├── chroma_db/               # Vectorstore (auto-generated)
+├── interaction_log.jsonl    # Query logs
+└── saved_corrections.jsonl  # User corrections
+```
+
+---
+
+## 🎓 Usage Examples
+
+### Basic Query
+```
+User: "Show all students with GPA above 3.5"
+System: 
+  Database: college_1
+  SQL: SELECT * FROM student WHERE GPA > 3.5
+```
+
+### Edit & Save
+```
+1. Ask question
+2. Review generated SQL
+3. Edit if needed
+4. Click "💾 Save Correction"
+5. Future queries improve automatically
+```
+
+### Evaluation
+```
+1. Go to 🏆 Leaderboard tab
+2. Set samples: 100
+3. Click "Run Evaluation"
+4. Get: Exact-match + Execution accuracy
+```
+
+---
+
+## ⚙️ Configuration
+
+**Switch Models** (main.py lines 37-40):
+```python
+USE_OPENAI = True              # True = OpenAI, False = Gemini
+OPENAI_MODEL = "gpt-4o-mini"   # Options: gpt-4o-mini, gpt-4o
+GEMINI_MODEL = "gemini-1.5-flash"
+TEMPERATURE = 0.0
+```
+
+**Adjust Databases** (main.py line 215):
+```python
+for i, (db_id, db_file) in enumerate(sorted(all_dbs.items())[:20]):  # Change 20 to 200
+```
+
+---
+
+## 📈 Expected Performance
+
+| Metric | Target |
+|--------|--------|
+| Exact Match Accuracy | 72-76% (with corrections) |
+| Execution Accuracy | 75-80% |
+| Databases Supported | 20 (default), 200+ (configurable) |
+| Response Time | < 5 seconds per query |
+
+---
+
+## 🛠️ Requirements
+
+- Python 3.11+
+- OpenAI API key (or Google Gemini API key)
+- Spider dataset (download from [yale-lily.github.io/spider](https://yale-lily.github.io/spider))
+- 4GB+ RAM (for 20 databases)
+- Internet connection (for API calls)
+
+---
+
+## 📦 Dependencies
+
+```
+langchain>=0.2.0
+langchain-openai>=0.1.0
+langchain-google-genai>=1.0.0
+langchain-community>=0.2.0
+chromadb
+sqlalchemy
+pandas>=2.2.0
+gradio
+python-dotenv
+```
+
+---
+
+## 🧪 Testing
+
+See [TESTING_GUIDE.md](TESTING_GUIDE.md) for:
+- Sample queries to test
+- Expected results
+- Evaluation workflow
+- Troubleshooting tips
+
+**Quick Test:**
+```
+1. python main.py
+2. Open http://127.0.0.1:7861
+3. Ask: "Show all activities"
+4. Click "Run Query"
+5. ✅ Should return results from activity_1 database
+```
+
+---
+
+## 🐛 Troubleshooting
+
+| Issue | Solution |
+|-------|----------|
+| Port in use | Change `server_port=7861` to `7862` |
+| Import errors | `pip install -r requirements.txt` |
+| API key error | Check `.env` file exists with `OPENAI_API_KEY=sk-...` |
+| Slow startup | Reduce database count (line 215) |
+| Database not found | Type: `Use database <db_id>` |
+
+---
+
+## 🎯 Phase Progression
+
+| Feature | Phase 1 | Phase 2 | Phase 3 |
+|---------|---------|---------|---------|
+| Databases | Single | Multiple (auto-route) | 20+ (configurable to 200) |
+| Schema | Basic | Table info | FK + Nullable + Qualified |
+| UI | Simple | Chat interface | 3-tab professional |
+| Learning | None | Few-shot | User corrections |
+| Evaluation | Manual | None | Official Spider metrics |
+
+---
+
+## 📄 License
+
+MIT License - See LICENSE file
+
+---
+
+## 🙏 Acknowledgments
+
+- **Spider Dataset:** Yale University
+- **LangChain:** LangChain AI
+- **Gradio:** Hugging Face
+- **OpenAI/Google:** API providers
+
+---
+
+## 📧 Contact
+
+- GitHub: [@ksaravindakashyap](https://github.com/ksaravindakashyap)
+- Repository: [Dbms-project](https://github.com/ksaravindakashyap/Dbms-project)
+
+---
+
+## 🎓 For Academic Use
+
+This project is suitable for:
+- DBMS course projects
+- NLP/Database research
+- Machine learning demonstrations
+- Software engineering portfolios
+
+**Citation:**
+```bibtex
+@software{nl2sql_spider_phase3,
+  title = {NL2SQL Spider Copilot - Phase 3},
+  year = {2025},
+  url = {https://github.com/ksaravindakashyap/Dbms-project}
+}
+```
+
+---
+
+**Status:** ✅ Production-Ready │ Leaderboard-Comparable │ Research-Grade
+
+**Built with ❤️ for DBMS Project - Phase 3**

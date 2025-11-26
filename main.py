@@ -28,6 +28,7 @@ from langchain_core.prompts import PromptTemplate
 
 # SQLAlchemy imports for robust DB loading
 from sqlalchemy import create_engine, text, inspect
+from sqlalchemy.pool import StaticPool
 
 # Pydantic for output parsing
 from pydantic import BaseModel
@@ -215,9 +216,22 @@ def load_spider_dataset(train_file: str = TRAIN_FILE):
     with open(train_file, 'r', encoding='utf-8') as f:
         spider_data = json.load(f)
 
-    # Load only databases that are commonly used (first 20 for faster startup)
+    # Load databases including cre_* databases for cross-schema testing
     all_db_ids = sorted({d['db_id'] for d in spider_data})
-    db_ids = all_db_ids[:20]  # Limit to 20 databases for manageable startup time
+    
+    # Priority: Load cre_* databases first for cross-schema testing, then others
+    cre_dbs = [db for db in all_db_ids if db.startswith('cre_')]
+    other_dbs = [db for db in all_db_ids if not db.startswith('cre_')]
+    
+    # Must-have databases for testing
+    priority_dbs = ['concert_singer', 'singer', 'pets_1', 'car_1', 'world_1', 'student_transcripts_tracking', 
+                    'flight_2', 'museum_visit', 'employee_hire_evaluation', 'dog_kennels', 'tvshow']
+    
+    # Load cre databases + priority databases + remaining up to 30 total
+    priority_set = set(priority_dbs)
+    remaining_dbs = [db for db in other_dbs if db not in priority_set]
+    
+    db_ids = cre_dbs[:5] + priority_dbs + remaining_dbs[:14]  # 5 + 11 + 14 = 30 databases
     
     databases = {}
     for db_id in db_ids:
@@ -226,7 +240,10 @@ def load_spider_dataset(train_file: str = TRAIN_FILE):
             continue
         
         try:
-            engine = create_engine("sqlite:///:memory:")
+            # Use in-memory database with check_same_thread=False to allow reuse
+            engine = create_engine("sqlite:///:memory:", 
+                                 connect_args={"check_same_thread": False},
+                                 poolclass=StaticPool)
             sql_files = sorted([f for f in os.listdir(db_dir) if f.endswith('.sql')])
             
             for sql_file in sql_files:
@@ -236,17 +253,17 @@ def load_spider_dataset(train_file: str = TRAIN_FILE):
                 
                 # Split and execute statements
                 statements = [s.strip() for s in sql_script.split(';') if s.strip()]
-                for stmt in statements[:100]:  # Limit statements per file to avoid hangs
-                    if not stmt or len(stmt) < 5:
-                        continue
-                    try:
-                        with engine.connect() as conn:
+                with engine.begin() as conn:  # Use begin() for auto-commit
+                    for stmt in statements[:100]:  # Limit statements per file to avoid hangs
+                        if not stmt or len(stmt) < 5:
+                            continue
+                        try:
                             conn.execute(text(stmt))
-                    except Exception:
-                        pass  # skip broken statements
+                        except Exception:
+                            pass  # skip broken statements
             
             # Enable foreign keys
-            with engine.connect() as conn:
+            with engine.begin() as conn:
                 conn.execute(text("PRAGMA foreign_keys = ON;"))
             
             # Create SQLDatabase
@@ -259,28 +276,187 @@ def load_spider_dataset(train_file: str = TRAIN_FILE):
     return spider_data, databases
 
 
-def get_full_schema(db: SQLDatabase) -> str:
-    """Generate fully qualified schema info with schema.table names."""
+def get_complete_schema_with_foreign_keys(db: SQLDatabase) -> str:
+    """Generate complete schema with PKs, FKs, and nullable constraints.
+    
+    All table and column names are normalized to lowercase for consistency
+    and to avoid case-sensitivity issues with the LLM.
+    """
     inspector = inspect(db._engine)
-    result = []
-    schemas = [s for s in inspector.get_schema_names() if s not in ['information_schema', 'pg_catalog', 'sqlite_master']]
-    if not schemas:
-        schemas = [None]  # SQLite default
-    for schema in schemas:
-        tables = inspector.get_table_names(schema=schema)
-        for table in tables:
-            qualified = f"{schema}.{table}" if schema else table
-            result.append(f"-- Table: {qualified}")
-            cols = inspector.get_columns(table, schema=schema)
-            col_lines = [f"  {col['name']} {col['type']}" for col in cols]
-            result.extend(col_lines)
+    lines = ["-- FULL DATABASE SCHEMA (all names in lowercase for consistency):"]
+    schemas_seen = set()
+    relationships = []  # Track all foreign key relationships
+    
+    # Debug: check what tables the inspector sees
+    all_tables = inspector.get_table_names()
+    print(f"[DEBUG get_complete_schema] Inspector found {len(all_tables)} tables: {all_tables}")
+    
+    for schema in inspector.get_schema_names():
+        if schema in (None, "information_schema", "pg_catalog", "sqlite_master", "sys", "main", "temp"):
+            continue
+        for table in inspector.get_table_names(schema=schema):
+            qualified = f"{schema}.{table}".lower() if schema else table.lower()
+            lines.append(f"-- Table: {qualified}")
+            schemas_seen.add(schema or "default")
+            
+            # Columns with nullable info (normalized to lowercase)
+            for col in inspector.get_columns(table, schema=schema):
+                nullable = " NOT NULL" if not col["nullable"] else ""
+                col_name = col['name'].lower()
+                lines.append(f"--   {col_name} {col['type']}{nullable}")
+            
+            # Primary Key
             pk = inspector.get_pk_constraint(table, schema=schema)
-            if pk and pk['constrained_columns']:
-                result.append(f"  PRIMARY KEY ({', '.join(pk['constrained_columns'])})")
-            fks = inspector.get_foreign_keys(table, schema=schema)
-            for fk in fks:
-                result.append(f"  FOREIGN KEY ({', '.join(fk['constrained_columns'])}) REFERENCES {fk['referred_table']} ({', '.join(fk['referred_columns'])})")
-    return "\n".join(result)
+            if pk.get("constrained_columns"):
+                pk_cols = ', '.join([c.lower() for c in pk['constrained_columns']])
+                lines.append(f"--   PRIMARY KEY ({pk_cols})")
+            
+            # Foreign Keys with full qualification
+            for fk in inspector.get_foreign_keys(table, schema=schema):
+                local = ", ".join([c.lower() for c in fk["constrained_columns"]])
+                ref_table = fk["referred_table"].lower()
+                ref_schema = fk.get("referred_schema") or schema
+                remote = ", ".join([c.lower() for c in fk["referred_columns"]])
+                ref_qualified = f"{ref_schema}.{ref_table}".lower() if ref_schema else ref_table
+                lines.append(f"--   FOREIGN KEY ({local}) → {ref_qualified} ({remote})")
+                # Track relationship for summary
+                table_qualified = f"{schema}.{table}".lower() if schema else table.lower()
+                relationships.append(f"{table_qualified}.{local} → {ref_qualified}.{remote}")
+    
+    # Fallback for SQLite (no explicit schemas)
+    if not schemas_seen:
+        for table in inspector.get_table_names():
+            table_lower = table.lower()
+            lines.append(f"-- Table: {table_lower}")
+            # Don't add 'default' - SQLite doesn't use schema prefixes
+            
+            for col in inspector.get_columns(table):
+                nullable = " NOT NULL" if not col["nullable"] else ""
+                col_name = col['name'].lower()
+                lines.append(f"--   {col_name} {col['type']}{nullable}")
+            
+            pk = inspector.get_pk_constraint(table)
+            if pk.get("constrained_columns"):
+                pk_cols = ', '.join([c.lower() for c in pk['constrained_columns']])
+                lines.append(f"--   PRIMARY KEY ({pk_cols})")
+            
+            for fk in inspector.get_foreign_keys(table):
+                local = ", ".join([c.lower() for c in fk["constrained_columns"]])
+                ref_table = fk["referred_table"].lower()
+                remote = ", ".join([c.lower() for c in fk["referred_columns"]])
+                lines.append(f"--   FOREIGN KEY ({local}) → {ref_table} ({remote})")
+                # Track relationship for summary
+                relationships.append(f"{table_lower}.{local} → {ref_table}.{remote}")
+    
+    # Only show schema detection if there are actual schemas (not SQLite)
+    if schemas_seen:
+        lines.insert(1, f"-- Detected schemas: {', '.join(sorted(schemas_seen))}")
+    else:
+        lines.insert(1, f"-- SQLite database (case-insensitive, use lowercase)")
+    
+    # Add relationship summary at the top for easy reference
+    if relationships:
+        lines.insert(2, "")
+        lines.insert(3, "-- TABLE RELATIONSHIPS (use these for JOINs):")
+        for rel in relationships:
+            lines.insert(4, f"--   {rel}")
+        lines.insert(4 + len(relationships), "")
+    
+    return "\n".join(lines)
+
+
+def select_relevant_tables(question: str, schema_text: str, llm) -> list:
+    """Pre-select top 7 most relevant tables including junction tables - Phase 3 accuracy boost."""
+    # Extract actual table names from schema
+    import re
+    actual_tables = []
+    for line in schema_text.split('\n'):
+        if line.startswith('-- Table: '):
+            table_name = line.replace('-- Table: ', '').strip()
+            actual_tables.append(table_name)
+    
+    print(f"[DEBUG select_relevant_tables] Actual tables from schema: {actual_tables}")
+    
+    if not actual_tables:
+        return []
+    
+    # Extract table info including FOREIGN KEYS (critical for finding junction tables)
+    table_hints = []
+    current_table = None
+    for line in schema_text.split('\n'):
+        if line.startswith('-- Table: '):
+            if current_table:
+                table_hints.append(current_table)
+            current_table = line + '\n'
+        elif current_table and (line.startswith('--   ') or line.strip() == ''):
+            # Include first few columns AND all foreign keys
+            if 'FOREIGN KEY' in line or 'PRIMARY KEY' in line or current_table.count('\n') < 5:
+                current_table += line + '\n'
+    if current_table:
+        table_hints.append(current_table)
+    
+    # Extract relationship summary from schema
+    relationships = []
+    for line in schema_text.split('\n'):
+        if line.strip().startswith('--   ') and '→' in line:
+            relationships.append(line.strip())
+    
+    rel_summary = '\n'.join(relationships[:15]) if relationships else ''  # Show first 15 relationships
+    
+    prompt = f"""Given the question and database schema below, return the top 7 most relevant table names as a JSON array.
+
+⚠️ CRITICAL: Include junction/linking tables that connect entities (tables with multiple foreign keys).
+
+Question: {question}
+
+Available tables: {', '.join(actual_tables)}
+
+TABLE RELATIONSHIPS (look for junction tables):
+{rel_summary}
+
+Table structures:
+{''.join(table_hints)}  
+
+SELECTION STRATEGY:
+1. Include main entity tables mentioned in the question (e.g., students, courses, departments)
+2. **MUST INCLUDE junction/linking tables** that connect the main entities (e.g., student_enrolment, student_enrolment_courses)
+3. Include tables that filter/qualify the query (e.g., departments if filtering by department)
+
+Return format: ["table1", "table2", "table3", "table4", "table5", "table6", "table7"]
+Return ONLY the JSON array with table names from the available tables list above."""
+    
+    try:
+        response = llm.invoke(prompt)
+        # Extract JSON from response
+        text = str(response.content if hasattr(response, 'content') else response)
+        print(f"[DEBUG select_relevant_tables] LLM response: {text[:200]}")
+        # Find JSON array
+        match = re.search(r'\[.*?\]', text, re.DOTALL)
+        if match:
+            tables = json.loads(match.group())
+            print(f"[DEBUG select_relevant_tables] Parsed tables: {tables}")
+            # Strip any schema prefixes (like 'main.') and validate
+            cleaned_tables = []
+            for t in tables:
+                # Remove schema prefix if present
+                if '.' in t:
+                    t = t.split('.')[-1]
+                # Check if it matches any actual table (case-insensitive for SQLite)
+                for actual_table in actual_tables:
+                    if t.lower() == actual_table.lower():
+                        cleaned_tables.append(actual_table)
+                        print(f"[DEBUG select_relevant_tables] Matched '{t}' to '{actual_table}'")
+                        break
+            print(f"[DEBUG select_relevant_tables] Final cleaned tables: {cleaned_tables}")
+            return cleaned_tables[:5]
+        else:
+            print(f"[DEBUG select_relevant_tables] No JSON array found in response")
+    except Exception as e:
+        print(f"[DEBUG select_relevant_tables] Table selection failed: {e}")
+    
+    # Fallback: return empty list (use all tables)
+    print(f"[DEBUG select_relevant_tables] Returning empty list (fallback)")
+    return []
 
 
 def get_db_router_chain(llm, db_descriptions):
@@ -311,7 +487,8 @@ Output only the JSON with the predicted db_id."""
 
 
 def predict_db_id(router_chain, db_list, question):
-    """Predict the db_id for a given question using the router chain."""
+    """Predict the db_id for a given question using LLM with keyword fallback."""
+    # First try LLM prediction
     try:
         class DBPrediction(BaseModel):
             db_id: str
@@ -323,9 +500,50 @@ def predict_db_id(router_chain, db_list, question):
             "db_list": db_list,
             "format_instructions": parser.get_format_instructions()
         })
-        return result.db_id
+        print(f"[DEBUG] LLM predicted database: {result.db_id}")
+        
+        # Verify the predicted database exists
+        if result.db_id in databases:
+            return result.db_id
+        else:
+            print(f"[DEBUG] LLM predicted '{result.db_id}' but it doesn't exist in loaded databases")
     except Exception as e:
-        return None
+        print(f"[DEBUG] LLM prediction failed: {e}")
+    
+    # Fallback to keyword matching if LLM fails
+    question_lower = question.lower()
+    keyword_matches = {
+        'apartment_rentals': ['apartment', 'rental', 'guest', 'booking', 'building', 'view_unit'],
+        'concert_singer': ['concert', 'singer', 'stadium', 'performance'],
+        'car_1': ['car', 'vehicle', 'model', 'maker', 'continents'],
+        'museum_visit': ['museum', 'visitor', 'visit'],
+        'flight_2': ['flight', 'airline', 'airport'],
+        'pets_1': ['pet', 'pettype', 'has_pet'],
+        'singer': ['singer', 'song'],
+        'employee_hire_evaluation': ['employee', 'hire', 'shop', 'evaluation'],
+        'world_1': ['country', 'city', 'language', 'population'],
+        'orchestra': ['orchestra', 'conductor', 'performance'],
+        'network_1': ['highschooler', 'friend', 'likes'],
+        'dog_kennels': ['dog', 'kennel', 'owner', 'treatment'],
+        'student_transcripts_tracking': ['student', 'transcript', 'course', 'degree', 'enrollment', 'department'],
+        'cre_Doc_Template_Mgt': ['document', 'template', 'paragraph'],
+        'battle_death': ['battle', 'death', 'ship'],
+        'tvshow': ['tv', 'show', 'cartoon', 'channel'],
+        'poker_player': ['poker', 'player'],
+        'voter_1': ['vote', 'contestant', 'area'],
+        'real_estate_properties': ['property', 'estate', 'feature'],
+        'course_teach': ['course', 'teacher'],
+    }
+    
+    # Check for keyword matches as fallback
+    for db_id, keywords in keyword_matches.items():
+        if any(keyword in question_lower for keyword in keywords):
+            if db_id in databases:
+                print(f"[DEBUG] Keyword fallback match: '{db_id}' (matched: {[k for k in keywords if k in question_lower]})")
+                return db_id
+    
+    print(f"[DEBUG] No database match found")
+    return None
 
 
 def init_embeddings_and_vectorstore(spider_data, persist_dir: str = PERSIST_DIR):
@@ -376,12 +594,43 @@ def generate_sql(llm, vectorstore, databases, db_descriptions, router_chain, db_
 
     db = databases[db_id]
 
-    # Get schema (disable sample rows to avoid table name issues)
+    # Get complete schema with foreign keys - Phase 3 upgrade
     try:
-        schema = db.get_table_info(sample_rows_in_table_info=0)
+        schema = get_complete_schema_with_foreign_keys(db)
     except Exception as e:
-        # Fallback to basic schema without samples
-        schema = str(db.get_usable_table_names())
+        # Fallback to basic schema
+        try:
+            schema = db.get_table_info(sample_rows_in_table_info=0)
+        except:
+            schema = str(db.get_usable_table_names())
+
+    # Pre-select relevant tables for better accuracy - Phase 3
+    selected_tables = select_relevant_tables(question, schema, llm)
+    print(f"[DEBUG] Selected tables: {selected_tables}")
+    
+    if selected_tables:
+        # Filter schema to show ONLY selected tables with ALL their columns
+        # Create lowercase set for case-insensitive matching
+        selected_lower = set(t.lower() for t in selected_tables)
+        filtered_schema_lines = ["-- RELEVANT TABLES (with complete column information):"]
+        current_table = None
+        include_current = False
+        
+        for line in schema.split('\n'):
+            if line.startswith('-- Table: '):
+                table_name = line.replace('-- Table: ', '').strip()
+                # Case-insensitive check
+                include_current = table_name.lower() in selected_lower
+                print(f"[DEBUG] Checking table '{table_name}' - include: {include_current}")
+                if include_current:
+                    filtered_schema_lines.append(line)
+            elif include_current:
+                filtered_schema_lines.append(line)
+        
+        # Use filtered schema if we found the tables, otherwise use full schema
+        if len(filtered_schema_lines) > 1:
+            schema = '\n'.join(filtered_schema_lines)
+        # If no tables matched, keep original schema
 
     # Retrieve few-shot examples (defensive API call)
     try:
@@ -399,29 +648,294 @@ def generate_sql(llm, vectorstore, databases, db_descriptions, router_chain, db_
         examples = "\n\n".join([f"-- Example: {doc.page_content}\n-- SQL: {doc.metadata.get('sql','')}" for doc in docs])
         schema = f"{schema}\n\n/* Few-shot examples:\n{examples}\n*/"
 
-    # Use default chain without custom prompt (simpler and more reliable)
-    chain = create_sql_query_chain(llm, db)
+    # Detect database type and schema requirements
+    is_sqlite = "SQLite database" in schema
+    multi_schema = "Detected schemas:" in schema and len(schema.split("Detected schemas:")[1].split(",")) > 1
     
-    # Invoke with the required inputs
-    try:
-        response = chain.invoke({"question": question})
-    except Exception as e:
-        # Fallback: generate SQL directly with LLM
-        prompt = f"""Given this database schema:
+    # Build enhanced prompt with qualified name enforcement - Phase 3
+    if is_sqlite:
+        qualified_rules = """
+CRITICAL SQLite RULES:
+- Do NOT use schema prefixes (like 'default.' or 'main.')
+- Use table names EXACTLY as shown in the schema (case-sensitive)
+- Use column names EXACTLY as shown in the schema
+- Example: SELECT * FROM Guests NOT FROM default.guests
+"""
+    elif multi_schema:
+        qualified_rules = """
+CRITICAL MULTI-SCHEMA RULES:
+- ALWAYS use fully qualified names: schema.table.column
+- NEVER use bare table names if more than one schema is present
+- Example: cre_Drama_Workshop_Groups.member NOT just member
+"""
+    else:
+        qualified_rules = ""
+
+    # Generate SQL directly with LLM using our enhanced schema and rules
+    if is_sqlite:
+        # Extract actual table and column names from schema for explicit listing
+        schema_info = {}
+        current_table = None
+        
+        # Debug: print first 500 chars of schema to see format
+        print(f"\n[DEBUG] Schema first 500 chars:\n{schema[:500]}")
+        
+        for line in schema.split('\n'):
+            if line.startswith('-- Table: '):
+                current_table = line.replace('-- Table: ', '').strip()
+                schema_info[current_table] = []
+                print(f"[DEBUG] Found table: {current_table}")
+            elif current_table and line.startswith('--   ') and not line.strip().startswith('-- PRIMARY') and not line.strip().startswith('-- FOREIGN'):
+                col_name = line.replace('--   ', '').strip().split()[0]
+                if col_name and not col_name.startswith('PRIMARY') and not col_name.startswith('FOREIGN'):
+                    schema_info[current_table].append(col_name)
+        
+        # Build explicit column listing - SHOW ALL COLUMNS (no truncation)
+        explicit_columns = []
+        for table, columns in schema_info.items():
+            if columns:
+                explicit_columns.append(f"Table '{table}': {', '.join(columns)}")  # Show ALL columns
+        
+        table_count = len(schema_info)
+        
+        # Debug: print what we extracted
+        print(f"\n[DEBUG] Extracted schema info for {table_count} tables:")
+        for ec in explicit_columns:
+            print(f"  {ec}")
+        
+        system_message = f"""You are a SQL expert. You MUST use ONLY the table and column names from the schema below.
+
+🚨 CRITICAL: The schema below is COMPLETE and AUTHORITATIVE.
+
+🚫 ABSOLUTELY FORBIDDEN JOIN PATTERNS (will cause errors):
+❌ JOIN table_name ON column IN (SELECT ...) 
+❌ JOIN table_name ON unrelated_column_1 = unrelated_column_2
+❌ Joining tables without using their FOREIGN KEY relationships
+
+✅ ONLY ALLOWED JOIN PATTERN:
+✅ JOIN table_name ON parent_table.foreign_key = child_table.primary_key
+✅ Use the FOREIGN KEY relationships shown in the schema below
+
+AVAILABLE TABLES AND THEIR COLUMNS:
+{chr(10).join(explicit_columns)}
+
+ABSOLUTE RULES:
+1. Use ONLY table names and column names listed above
+2. DO NOT invent, guess, or assume any column names
+3. If a column name sounds logical but isn't in the list above, IT DOESN'T EXIST
+4. All names in lowercase
+5. When aggregating or listing entities (people, places, things), prefer human-readable fields (name, title, description) over IDs
+6. **CRITICAL**: Study FOREIGN KEY relationships - they show how tables connect
+7. **JOINING TABLES**: Use ONLY foreign key columns for JOIN conditions (never join on unrelated columns)
+8. **MANY-TO-MANY**: Look for junction/linking tables (e.g., Student_Enrolment_Courses links students to courses)
+
+FOREIGN KEY & JOIN RULES:
+🔑 ONLY join tables using their FOREIGN KEY relationships
+🔑 If table A has a foreign key to table B, join using: `A JOIN B ON A.foreign_key_id = B.primary_key_id`
+🔑 For many-to-many relationships, you MUST use the junction/linking table
+🔑 NEVER create JOIN conditions like `ON table1.id IN (SELECT ...)` - use proper equality joins
+🔑 NEVER join unrelated columns (e.g., student_id = section_id is WRONG)
+
+COMMON PATTERNS:
+✅ Students → Student_Enrolment → Student_Enrolment_Courses → Courses
+✅ Concerts → Singer_In_Concert → Singers (through junction table)
+❌ Students → Sections directly (NO direct relationship - need junction table)
+
+USER EXPERIENCE GUIDELINES:
+✅ PREFER: SELECT name, title, description (human-readable)
+❌ AVOID: SELECT id (unless specifically asked for IDs)
+✅ PREFER: GROUP_CONCAT(singer.name) to show "John, Mary, Bob"
+❌ AVOID: GROUP_CONCAT(singer_id) to show "1, 2, 3"
+✅ When listing entities, JOIN to the main table to get descriptive fields
+
+EXAMPLES OF WHAT **NOT** TO DO:
+❌ "bookings" table - WRONG! The actual table is "apartment_bookings"
+❌ "booking_id" column - WRONG! The actual column is "apt_booking_id"  
+❌ "name" column in guests - WRONG! Actual columns are "guest_first_name" and "guest_last_name"
+❌ "apt_type" column - WRONG! Actual column is "apt_type_code"
+❌ GROUP_CONCAT(singer_id) - WRONG! Use GROUP_CONCAT(singer.name) for readability
+❌ JOIN sections ON student_id = section_id - WRONG! These are unrelated columns
+❌ JOIN sections ON section_id IN (...) - WRONG! Use proper equality joins with foreign keys
+
+IF YOU USE A NAME NOT IN THE LIST ABOVE, THE QUERY WILL FAIL."""
+    else:
+        system_message = "You are a SQL expert. Generate valid SQL queries using the exact schema provided."
+    
+    prompt = f"""{system_message}
+
+═══════════════════════════════════════════════════════════════
+COMPLETE DATABASE SCHEMA WITH ALL COLUMNS:
+═══════════════════════════════════════════════════════════════
 {schema}
+═══════════════════════════════════════════════════════════════
 
-Generate a SQL query to answer: {question}
+{qualified_rules}
 
-Return only the SQL query, nothing else."""
+QUESTION: {question}
+
+🔍 CRITICAL: Study the FOREIGN KEY relationships in the schema above BEFORE writing SQL!
+
+For student-course queries in THIS database, the relationship path is:
+  students (has student_id)
+    ↓ JOIN ON students.student_id = student_enrolment.student_id
+  student_enrolment (links students to degree programs)
+    ↓ JOIN ON student_enrolment.student_enrolment_id = student_enrolment_courses.student_enrolment_id  
+  student_enrolment_courses (links enrollments to courses)
+    ↓ JOIN ON student_enrolment_courses.course_id = courses.course_id
+  courses (has course details)
+
+⚠️ CRITICAL LIMITATION: There is NO direct link between courses and departments in this schema.
+⚠️ The ONLY way to associate courses with departments is through student enrollments:
+   courses → student_enrolment_courses → student_enrolment → degree_programs → departments
+
+🔴 FORBIDDEN: Do NOT join courses.course_id = degree_programs.degree_program_id (different entities!)
+🔴 FORBIDDEN: Do NOT create non-existent relationships between tables
+
+✅ CORRECT interpretation for "courses offered by a department":
+   = "courses taken by students enrolled in degree programs of that department"
+   This requires going through the student_enrolment chain.
+
+STEP-BY-STEP APPROACH:
+1. **Identify required tables**: Which tables contain the data needed?
+2. **Find the relationship path**: How are these tables connected via FOREIGN KEYS?
+3. **Check for junction tables**: Do I need a linking table for many-to-many relationships?
+4. **Build proper JOINs**: Use foreign key columns for equality joins (A.fk_id = B.pk_id)
+5. **Choose readable columns**: Use names/descriptions, not IDs (unless specifically requested)
+
+BEFORE YOU WRITE SQL:
+✓ Look at the FOREIGN KEY relationships in the schema
+✓ Trace the path between tables using foreign keys
+✓ Use junction/linking tables for many-to-many relationships
+✓ NEVER join on unrelated columns
+✓ Use ONLY exact table/column names from the list above
+✓ Prefer human-readable fields (names) over IDs
+
+COMMON PATTERN - Aggregating related entities:
+When you need to show "list of singers", "list of students", "list of products", etc.:
+❌ WRONG: GROUP_CONCAT(junction_table.entity_id)  
+✅ CORRECT: JOIN entity_table, then GROUP_CONCAT(entity_table.name)
+
+Example: For "list of singers who performed at each concert":
+❌ BAD:  GROUP_CONCAT(singer_in_concert.singer_id)  → Shows "1,2,3"
+✅ GOOD: JOIN singer, GROUP_CONCAT(singer.name)    → Shows "John,Mary,Bob"
+
+Example: For "students enrolled in courses":
+❌ BAD:  students JOIN sections (no direct relationship)
+✅ GOOD: students → student_enrolment → student_enrolment_courses → courses (follow foreign keys)
+
+CRITICAL PATTERN - "enrolled in EVERY course" queries:
+When the question asks for entities that have "all", "every", "each" of something:
+
+❌ WRONG HAVING clause:
+  HAVING COUNT(DISTINCT item_id) = (SELECT COUNT(*) FROM items)
+  ↑ This counts ALL items in the table, not filtered items
+
+✅ CORRECT HAVING clause:
+  HAVING COUNT(DISTINCT item_id) = (
+      SELECT COUNT(DISTINCT item_id) 
+      FROM [same_tables_and_joins_as_main_query]
+      WHERE [same_filter_conditions]
+  )
+  ↑ This counts only the filtered subset
+
+Example: "Students enrolled in every course offered by computer science department"
+❌ WRONG:
+  HAVING COUNT(DISTINCT c.course_id) = (SELECT COUNT(*) FROM courses)
+  ↑ Counts ALL courses (all departments)
+
+✅ CORRECT:
+  HAVING COUNT(DISTINCT c.course_id) = (
+      SELECT COUNT(DISTINCT c2.course_id)
+      FROM courses c2
+      JOIN student_enrolment_courses sec2 ON c2.course_id = sec2.course_id
+      JOIN student_enrolment se2 ON sec2.student_enrolment_id = se2.student_enrolment_id
+      JOIN degree_programs dp2 ON se2.degree_program_id = dp2.degree_program_id
+      JOIN departments d2 ON dp2.department_id = d2.department_id
+      WHERE d2.department_name = 'computer science'
+  )
+  ↑ Counts only CS courses (through the student_enrolment chain - the ONLY valid path)
+
+Generate the SQL query:
+
+Return ONLY the SQL query without any explanation, markdown formatting, or additional text.
+
+SQL QUERY:"""
+    
+    try:
         response = llm.invoke(prompt)
+    except Exception as e:
+        # Fallback to basic chain if LLM invoke fails
+        try:
+            chain = create_sql_query_chain(llm, db)
+            response = chain.invoke({"question": question})
+        except:
+            return f"-- Error generating SQL: {e}"
 
     sql = extract_llm_text(response).strip()
+    
+    # Remove any explanatory text before or after the SQL
+    # Look for SELECT statement and extract only that
+    import re
+    select_match = re.search(r'(SELECT\s+.*?;)', sql, re.IGNORECASE | re.DOTALL)
+    if select_match:
+        sql = select_match.group(1)
+    
+    # Also check for other SQL statements (INSERT, UPDATE, DELETE, CREATE, etc.)
+    if not select_match:
+        other_match = re.search(r'((?:INSERT|UPDATE|DELETE|CREATE|ALTER|DROP)\s+.*?;)', sql, re.IGNORECASE | re.DOTALL)
+        if other_match:
+            sql = other_match.group(1)
     # Strip any markdown code blocks if present
     if sql.startswith("```sql"):
         sql = sql[6:]
     if sql.endswith("```"):
         sql = sql[:-3]
     sql = sql.strip()
+    
+    # Validate SQL for common forbidden patterns
+    validation_errors = []
+    
+    # Check for forbidden JOIN ON ... IN (...) pattern
+    if re.search(r'JOIN\s+\w+\s+(?:ON|on)\s+[^=]+\s+IN\s*\(', sql, re.IGNORECASE):
+        validation_errors.append("⚠️ INVALID: Using 'JOIN ... ON column IN (...)' - Use equality JOIN with foreign keys")
+    
+    # Check for comparing unrelated ID columns (e.g., student_id = section_id)
+    invalid_joins = re.findall(r'ON\s+(\w+_id)\s*=\s*(\w+_id)', sql, re.IGNORECASE)
+    for col1, col2 in invalid_joins:
+        if col1 != col2 and not any(x in col1 for x in ['student', 'course', 'section']) or \
+           not any(x in col2 for x in ['student', 'course', 'section']):
+            # Only warn if they're clearly unrelated (different entity types)
+            pass  # Too aggressive, skip for now
+    
+    if validation_errors:
+        error_msg = "\n".join(validation_errors)
+        print(f"[VALIDATION ERROR]\n{error_msg}\n{sql}")
+        # Return error comment + the bad SQL so user can see what went wrong
+        return f"-- VALIDATION FAILED:\n-- {error_msg}\n\n-- Generated (but invalid) SQL:\n{sql}"
+    
+    # For SQLite: Remove schema prefixes like 'main.' or 'default.'
+    if is_sqlite:
+        import re
+        # Remove schema prefixes from table names (main.table_name -> table_name)
+        sql = re.sub(r'\b(main|default)\s*\.\s*', '', sql, flags=re.IGNORECASE)
+    
+    # Validate SQL against schema (basic check for common errors)
+    if is_sqlite:
+        # Check for common hallucinated column names (case-insensitive check)
+        sql_lower = sql.lower()
+        hallucinated_patterns = [
+            ('select name from', 'guest_first_name, guest_last_name'),
+            (' from bookings', 'apartment_bookings'),
+            ('from singers', 'singer'),
+            ('from concerts', 'concert'),
+            ('apartment_id', 'apt_id'),
+        ]
+        
+        for wrong_pattern, correction_hint in hallucinated_patterns:
+            if wrong_pattern in sql_lower:
+                sql = f"-- Warning: Possible error detected. Check schema.\n-- Hint: Use '{correction_hint}' instead\n{sql}"
+                break
+    
     return sql
 
 
@@ -477,26 +991,34 @@ def build_gradio_app(llm, vectorstore, databases, db_descriptions, router_chain,
     Features:
     - Stateful chatbot with conversation history.
     - Automatic DB switching with semantic router.
-    - Supports /schema command with enhanced info.
-    - Editable SQL textbox after generation.
-    - Buttons for Regenerate SQL and Run Query.
-    - Accuracy tracker.
+    - Cross-schema support with foreign keys.
+    - Table pre-selection for accuracy boost.
+    - Save corrections to improve few-shot learning.
     """
     model_name = f"OpenAI {OPENAI_MODEL}" if USE_OPENAI else f"Gemini {GEMINI_MODEL}"
-    title = f"NL2SQL Spider │ Model: {model_name}"
+    title = f"NL2SQL Spider Copilot - Intelligent SQL Generation"
+    
+    # Stats tracking
+    corrections_file = "saved_corrections.jsonl"
     
     with gr.Blocks(title=title) as demo:
-        gr.Markdown("# NL2SQL System - Phase 2")
-        gr.Markdown("Phase 2 Accuracy: 68.4% on Spider dev (exact match)")
-        gr.Markdown("Type your question (auto-detects database) or '/schema' to show current DB schema. Say 'Use database <db_id>' to force switch.")
-
-        chatbot = gr.Chatbot(label="Conversation History")
-        msg = gr.Textbox(label="Your Message", placeholder="Ask a question or type /schema")
-        sql_box = gr.Textbox(label="Generated SQL (Edit if needed)", lines=6, interactive=True, visible=False)
+        gr.Markdown(f"# {title}")
+        gr.Markdown(f"**Model:** {model_name} │ **Databases Loaded:** {len(databases)} │ **Auto-detection & Cross-schema Support**")
+        
+        gr.Markdown("💡 **Tips:** Type your question to auto-detect database | Use `/schema <database>` to view schema | Say 'Use database <db_id>' to force switch")
+        
+        # Main Chat Interface
+        chatbot = gr.Chatbot(label="Conversation History", height=450)
+        msg = gr.Textbox(label="Your Question", placeholder="Ask a question in natural language...", lines=2)
+        sql_box = gr.Textbox(label="Generated SQL (Edit if needed)", lines=8, interactive=True, visible=False)
+        
         with gr.Row():
-            regenerate_btn = gr.Button("Regenerate SQL", visible=False)
-            run_query_btn = gr.Button("Run Query", visible=False)
-
+            regenerate_btn = gr.Button("🔄 Regenerate SQL", visible=False)
+            run_query_btn = gr.Button("▶️ Run Query", visible=False)
+            save_correction_btn = gr.Button("💾 Save Correction", visible=False)
+        
+        correction_status = gr.Textbox(label="Status", visible=False, interactive=False)
+        
         # State for history, current db_id, etc.
         history = gr.State([])
         current_db_id = gr.State("")
@@ -507,22 +1029,34 @@ def build_gradio_app(llm, vectorstore, databases, db_descriptions, router_chain,
         predicted_db_id = gr.State("")
         manual_override = gr.State(False)
 
+
         def user_message(message, history, current_db_id):
             """Handle user input: /schema, force DB switch, or generate SQL with auto DB detection."""
             message = message.strip()
             if not message:
-                return "", history, gr.update(visible=False), gr.update(visible=False), gr.update(visible=False), current_db_id, "", "", [], "", False
+                return "", history, gr.update(visible=False), gr.update(visible=False), gr.update(visible=False), gr.update(visible=False), current_db_id, "", "", [], "", False
             
-            if message == "/schema":
-                if not current_db_id:
-                    response = "No database selected. Ask a question first."
+            if message.startswith("/schema"):
+                # Handle /schema or /schema <database>
+                parts = message.split()
+                if len(parts) > 1:
+                    db_id = parts[1].strip()
+                    if db_id in databases:
+                        db = databases[db_id]
+                        schema = get_complete_schema_with_foreign_keys(db)
+                        response = f"**Schema for {db_id}:**\n\n```\n{schema}\n```"
+                    else:
+                        response = f"Database '{db_id}' not found. Available databases: {', '.join(sorted(databases.keys())[:15])}..."
                 else:
-                    db = databases[current_db_id]
-                    schema = get_full_schema(db)
-                    response = f"Schema for {current_db_id}:\n\n{schema}"
+                    if not current_db_id:
+                        response = "No database selected. Use `/schema <database>` or ask a question first."
+                    else:
+                        db = databases[current_db_id]
+                        schema = get_complete_schema_with_foreign_keys(db)
+                        response = f"**Schema for {current_db_id}:**\n\n```\n{schema}\n```"
                 history.append({"role": "user", "content": message})
                 history.append({"role": "assistant", "content": response})
-                return "", history, gr.update(visible=False), gr.update(visible=False), gr.update(visible=False), current_db_id, "", "", [], "", False
+                return "", history, gr.update(visible=False), gr.update(visible=False), gr.update(visible=False), gr.update(visible=False), current_db_id, "", "", [], "", False
             
             elif message.lower().startswith("use database"):
                 parts = message.lower().split("use database")
@@ -539,6 +1073,7 @@ def build_gradio_app(llm, vectorstore, databases, db_descriptions, router_chain,
             else:
                 # Auto-detect or predict database
                 pred_db_id = predict_db_id(router_chain, db_list, message)
+                print(f"[DEBUG] Database prediction for '{message[:50]}...': {pred_db_id}")
                 manual_override = False
                 
                 # If router failed, use current_db_id
@@ -548,6 +1083,8 @@ def build_gradio_app(llm, vectorstore, databases, db_descriptions, router_chain,
                     else:
                         # Try to use first available database
                         pred_db_id = sorted(databases.keys())[0] if databases else None
+                
+                print(f"[DEBUG] Final selected database: {pred_db_id}")
                 
                 if not pred_db_id:
                     response = "Error: No databases available or could not determine database."
@@ -570,18 +1107,51 @@ def build_gradio_app(llm, vectorstore, databases, db_descriptions, router_chain,
                     fs_ids = []
                 
                 history.append({"role": "user", "content": message})
-                history.append({"role": "assistant", "content": f"Generated SQL:\n```sql\n{sql}\n```"})
+                history.append({"role": "assistant", "content": f"**Database:** {pred_db_id}\n\n**Generated SQL:**\n```sql\n{sql}\n```"})
                 
-                return "", history, gr.update(value=sql, visible=True), gr.update(visible=True), gr.update(visible=True), current_db_id, message, sql, fs_ids, pred_db_id, manual_override
+                return "", history, gr.update(value=sql, visible=True), gr.update(visible=True), gr.update(visible=True), gr.update(visible=True), gr.update(visible=False), current_db_id, message, sql, fs_ids, pred_db_id, manual_override
+
+        def save_correction(question, sql, db_id):
+            """Save user-corrected SQL to few-shot store."""
+            try:
+                correction = {
+                    "timestamp": datetime.utcnow().isoformat(),
+                    "question": question,
+                    "sql": sql,
+                    "db_id": db_id
+                }
+                
+                # Save to corrections file
+                with open(corrections_file, 'a', encoding='utf-8') as f:
+                    json.dump(correction, f, ensure_ascii=False)
+                    f.write('\n')
+                
+                # Also add to vectorstore for immediate use
+                doc = Document(
+                    page_content=question,
+                    metadata={"sql": sql, "db_id": db_id, "source": "user_correction"}
+                )
+                vectorstore.add_documents([doc])
+                
+                # Count corrections
+                try:
+                    with open(corrections_file, 'r', encoding='utf-8') as f:
+                        count = sum(1 for line in f)
+                except:
+                    count = 1
+                
+                return gr.update(value=f"✅ Correction saved! Total corrections: {count}", visible=True)
+            except Exception as e:
+                return gr.update(value=f"❌ Error saving correction: {e}", visible=True)
 
         def regenerate_sql(history, db_id, question):
             """Regenerate SQL for the current question."""
             if not question:
                 return history, gr.update(visible=False), gr.update(visible=False), gr.update(visible=False)
-            sql = generate_sql(llm, vectorstore, databases, db_descriptions, router_chain, db_list, question, db_id)
+            sql = generate_sql(llm, vectorstore, databases, DB_DESCRIPTIONS, router_chain, db_list, question, db_id)
             # Update history
-            history[-1] = {"role": "assistant", "content": f"Regenerated SQL:\n{sql}"}
-            return history, gr.update(value=sql, visible=True), gr.update(visible=True), gr.update(visible=True), sql
+            history[-1] = {"role": "assistant", "content": f"**Regenerated SQL:**\n```sql\n{sql}\n```"}
+            return history, gr.update(value=sql, visible=True), gr.update(visible=True), gr.update(visible=True), gr.update(visible=True), sql
 
         def run_query(sql, db_id, question, generated_sql, few_shot_ids, predicted_db_id, manual_override, history):
             """Execute the (possibly edited) SQL and append to history."""
@@ -621,11 +1191,12 @@ def build_gradio_app(llm, vectorstore, databases, db_descriptions, router_chain,
             }
             log_interaction(LOG_FILE, log_entry)
 
-            return history, gr.update(visible=False), gr.update(visible=False), gr.update(visible=False)
+            return history, gr.update(visible=False), gr.update(visible=False), gr.update(visible=False), gr.update(visible=False), gr.update(visible=False)
 
-        msg.submit(user_message, inputs=[msg, history, current_db_id], outputs=[msg, chatbot, sql_box, regenerate_btn, run_query_btn, current_db_id, current_question, current_generated_sql, few_shot_ids, predicted_db_id, manual_override])
-        regenerate_btn.click(regenerate_sql, inputs=[history, current_db_id, current_question], outputs=[chatbot, sql_box, regenerate_btn, run_query_btn, current_generated_sql])
-        run_query_btn.click(run_query, inputs=[sql_box, current_db_id, current_question, current_generated_sql, few_shot_ids, predicted_db_id, manual_override, history], outputs=[chatbot, sql_box, regenerate_btn, run_query_btn])
+        msg.submit(user_message, inputs=[msg, history, current_db_id], outputs=[msg, chatbot, sql_box, regenerate_btn, run_query_btn, save_correction_btn, correction_status, current_db_id, current_question, current_generated_sql, few_shot_ids, predicted_db_id, manual_override])
+        regenerate_btn.click(regenerate_sql, inputs=[history, current_db_id, current_question], outputs=[chatbot, sql_box, regenerate_btn, run_query_btn, save_correction_btn, current_generated_sql])
+        run_query_btn.click(run_query, inputs=[sql_box, current_db_id, current_question, current_generated_sql, few_shot_ids, predicted_db_id, manual_override, history], outputs=[chatbot, sql_box, regenerate_btn, run_query_btn, save_correction_btn, correction_status])
+        save_correction_btn.click(save_correction, inputs=[current_question, sql_box, current_db_id], outputs=[correction_status])
 
     return demo
 
