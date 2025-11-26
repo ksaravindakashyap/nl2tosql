@@ -1417,13 +1417,14 @@ def build_gradio_app(llm, vectorstore, databases, db_descriptions, router_chain,
         
         /* SQL CODE PREVIEW */
         .sql-glass {
-            background: rgba(30, 41, 59, 0.5) !important;
+            background: rgba(0,0,0,0.25) !important;
             backdrop-filter: blur(16px) !important;
             border: 1px solid rgba(255,255,255,0.1) !important;
             border-radius: 1rem !important;
             padding: 1.5rem !important;
             margin: 1rem 0 !important;
-            box-shadow: 0 4px 16px rgba(0,0,0,0.3) !important;
+            box-shadow: 0 8px 32px rgba(0,0,0,0.3) !important;
+            min-height: 250px !important;
         }
         
         /* FORCE CODE COMPONENT TRANSPARENCY */
@@ -1569,6 +1570,16 @@ def build_gradio_app(llm, vectorstore, databases, db_descriptions, router_chain,
             background: rgba(59, 130, 246, 0.8);
         }
         
+        /* HIDE PROGRESS INDICATOR */
+        .progress-bar, .progress-level, .progress-level-inner,
+        .progress-text, .meta-text, .meta-text-center,
+        div[class*="progress"], span[class*="progress"],
+        .generating, [data-testid="block-info"] {
+            display: none !important;
+            visibility: hidden !important;
+            opacity: 0 !important;
+        }
+        
         /* MOBILE RESPONSIVE */
         @media (max-width: 768px) {
             .moon-header h1 {
@@ -1664,7 +1675,7 @@ def build_gradio_app(llm, vectorstore, databases, db_descriptions, router_chain,
                     sql_box = gr.Code(
                         label="",
                         language="sql",
-                        lines=10,
+                        lines=12,
                         show_label=False
                     )
                     
