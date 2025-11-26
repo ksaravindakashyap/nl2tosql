@@ -1,0 +1,2 @@
+{"timestamp": "2025-11-26T18:04:03.661725", "question": "Show me all singers", "sql": "SELECT * \nFROM singer;", "db_id": "concert_singer"}
+{"timestamp": "2025-11-26T18:04:09.605207", "question": "Show me all singers", "sql": "SELECT * \nFROM singer;", "db_id": "concert_singer"}

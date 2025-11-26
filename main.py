@@ -1119,6 +1119,25 @@ def build_gradio_app(llm, vectorstore, databases, db_descriptions, router_chain,
             background: transparent !important;
         }
         
+        /* REMOVE ALL TEXTBOX BACKGROUNDS */
+        .gr-textbox, .gr-text-input, .gr-input,
+        textarea, input[type="text"],
+        .scroll-hide, .wrap, .svelte-*,
+        [class*="textbox"], [class*="input"] {
+            background: transparent !important;
+            border: none !important;
+            box-shadow: none !important;
+        }
+        
+        /* REMOVE BLUE FOCUS BOXES */
+        textarea:focus, input:focus,
+        .gr-textbox:focus-within,
+        *:focus-visible {
+            outline: none !important;
+            box-shadow: none !important;
+            border: none !important;
+        }
+        
         /* MAIN COLUMN BACKGROUNDS */
         .svelte-1ed2p3z, .svelte-1t38q2d {
             background: transparent !important;
@@ -1132,11 +1151,35 @@ def build_gradio_app(llm, vectorstore, databases, db_descriptions, router_chain,
             background: transparent !important;
         }
         
-        /* TARGET CHATBOT SPECIFICALLY WITH ALL POSSIBLE SELECTORS */
+        /* FORCE INPUT PILL CHILDREN TO BE TRANSPARENT */
+        .input-pill > *, .input-pill .wrap,
+        .input-pill .scroll-hide, .input-pill .svelte-*,
+        .prompt-container > *, .prompt-container .wrap {
+            background: transparent !important;
+            border: none !important;
+            box-shadow: none !important;
+        }
+        
+        /* TARGET CHATBOT SPECIFICALLY WITH ALL POSSIBLE SELECTORS - REMOVE ALL WRAPPERS */
         .message-wrap, .message-row, .pending, .bubble-wrap,
-        div[class*="chatbot"], div[class*="Chatbot"] {
-            background: rgba(0,0,0,0.15) !important;
-            backdrop-filter: blur(12px) !important;
+        div[class*="chatbot"], div[class*="Chatbot"],
+        .user-row, .bot-row, .message-row,
+        [class*="user"], [class*="bot"],
+        .chatbot > div, .chatbot > div > div,
+        gradio-chatbot, gradio-chatbot > *,
+        [data-testid="user"], [data-testid="bot"] {
+            background: transparent !important;
+            backdrop-filter: none !important;
+            padding: 0 !important;
+            margin: 0 !important;
+            border: none !important;
+            box-shadow: none !important;
+        }
+        
+        /* FORCE ALL CHAT CONTAINER ELEMENTS TRANSPARENT */
+        .chatbot *, .chatbot div, .chatbot > div > div > div {
+            background: transparent !important;
+            border: none !important;
         }
         
         /* GRADIO 6.0 SPECIFIC OVERRIDES */
@@ -1172,7 +1215,10 @@ def build_gradio_app(llm, vectorstore, databases, db_descriptions, router_chain,
         
         /* CHAT BUBBLES */
         .message {
-            padding: 0.75rem !important;
+            padding: 0.5rem 0.75rem !important;
+            margin: 0.25rem 0 !important;
+            max-width: fit-content !important;
+            width: auto !important;
         }
         
         .message.user {
@@ -1182,6 +1228,7 @@ def build_gradio_app(llm, vectorstore, databases, db_descriptions, router_chain,
             border-radius: 1rem 1rem 0.25rem 1rem !important;
             margin-left: auto !important;
             color: white !important;
+            padding: 0.5rem 0.75rem !important;
         }
         
         .message.bot {
@@ -1191,22 +1238,27 @@ def build_gradio_app(llm, vectorstore, databases, db_descriptions, router_chain,
             border-radius: 1rem 1rem 1rem 0.25rem !important;
             margin-right: auto !important;
             color: white !important;
+            padding: 0.5rem 0.75rem !important;
         }
         
         /* SHADCN-STYLE PREMIUM PROMPT INPUT */
         .prompt-container {
             max-width: 56rem !important;
-            margin: 0 auto 20vh auto !important;
+            margin: 0 auto !important;
             position: relative !important;
+            background: transparent !important;
+            border: none !important;
+            box-shadow: none !important;
+            padding: 0 !important;
         }
         
         .input-pill {
-            background: rgba(255,255,255,0.05) !important;
+            background: rgba(255,255,255,0.02) !important;
             backdrop-filter: blur(24px) !important;
-            border: 1px solid rgba(255,255,255,0.2) !important;
+            border: 1px solid rgba(255,255,255,0.08) !important;
             border-radius: 1.5rem !important;
             padding: 0.75rem 4.5rem 0.75rem 1.25rem !important;
-            box-shadow: 0 20px 60px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.1) !important;
+            box-shadow: none !important;
             position: relative !important;
             transition: all 0.3s ease !important;
         }
@@ -1220,7 +1272,7 @@ def build_gradio_app(llm, vectorstore, databases, db_descriptions, router_chain,
             background: transparent !important;
             border: none !important;
             color: white !important;
-            font-size: 1rem !important;
+            font-size: 1.02rem !important;
             resize: none !important;
             min-height: 48px !important;
             max-height: 240px !important;
@@ -1249,7 +1301,7 @@ def build_gradio_app(llm, vectorstore, databases, db_descriptions, router_chain,
             min-width: 48px !important;
             min-height: 48px !important;
             border-radius: 50% !important;
-            background: linear-gradient(135deg, #f97316 0%, #ec4899 100%) !important;
+            background: linear-gradient(135deg, #3b82f6 0%, #06b6d4 100%) !important;
             border: none !important;
             color: white !important;
             display: flex !important;
@@ -1257,13 +1309,51 @@ def build_gradio_app(llm, vectorstore, databases, db_descriptions, router_chain,
             justify-content: center !important;
             cursor: pointer !important;
             transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1) !important;
-            box-shadow: 0 4px 16px rgba(249, 115, 22, 0.4) !important;
+            box-shadow: 0 4px 16px rgba(59, 130, 246, 0.4) !important;
             flex-shrink: 0 !important;
+        }
+        
+        /* RUN QUERY SEND BUTTON (SAME AS SEND) */
+        .run-query-send {
+            width: 48px !important;
+            height: 48px !important;
+            min-width: 48px !important;
+            min-height: 48px !important;
+            max-width: 48px !important;
+            max-height: 48px !important;
+            border-radius: 50% !important;
+            background: linear-gradient(135deg, #3b82f6 0%, #06b6d4 100%) !important;
+            border: none !important;
+            color: white !important;
+            display: flex !important;
+            align-items: center !important;
+            justify-content: center !important;
+            cursor: pointer !important;
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1) !important;
+            box-shadow: 0 4px 16px rgba(59, 130, 246, 0.4) !important;
+            flex-shrink: 0 !important;
+            padding: 0 !important;
+        }
+        
+        .run-query-send:hover {
+            transform: scale(1.1) !important;
+            box-shadow: 0 8px 24px rgba(59, 130, 246, 0.6), 0 0 20px rgba(6, 182, 212, 0.3) !important;
+        }
+        
+        .run-query-send:active {
+            transform: scale(0.95) !important;
+        }
+        
+        .run-query-send::before {
+            content: '↑' !important;
+            font-size: 24px !important;
+            font-weight: bold !important;
+            line-height: 1 !important;
         }
         
         .send-premium:hover {
             transform: scale(1.1) !important;
-            box-shadow: 0 8px 24px rgba(249, 115, 22, 0.6), 0 0 20px rgba(249, 115, 22, 0.3) !important;
+            box-shadow: 0 8px 24px rgba(59, 130, 246, 0.6), 0 0 20px rgba(6, 182, 212, 0.3) !important;
         }
         
         .send-premium:active {
@@ -1280,10 +1370,10 @@ def build_gradio_app(llm, vectorstore, databases, db_descriptions, router_chain,
         /* Pulse animation when input has content */
         @keyframes pulse-glow {
             0%, 100% {
-                box-shadow: 0 4px 16px rgba(249, 115, 22, 0.4);
+                box-shadow: 0 4px 16px rgba(59, 130, 246, 0.4);
             }
             50% {
-                box-shadow: 0 4px 24px rgba(249, 115, 22, 0.7), 0 0 30px rgba(249, 115, 22, 0.4);
+                box-shadow: 0 4px 24px rgba(59, 130, 246, 0.7), 0 0 30px rgba(6, 182, 212, 0.4);
             }
         }
         
@@ -1332,20 +1422,22 @@ def build_gradio_app(llm, vectorstore, databases, db_descriptions, router_chain,
         
         /* BUTTONS - ROUNDED & MODERN */
         .btn-moon {
-            background: linear-gradient(135deg, #3b82f6 0%, #6366f1 100%) !important;
+            background: #3b82f6 !important;
             color: white !important;
             border: none !important;
-            border-radius: 0.75rem !important;
-            padding: 0.75rem 1.5rem !important;
+            border-radius: 0.5rem !important;
+            padding: 0.75rem 2.5rem !important;
             font-weight: 600 !important;
             cursor: pointer !important;
             transition: all 0.3s ease !important;
-            box-shadow: 0 4px 12px rgba(59, 130, 246, 0.4) !important;
+            box-shadow: 0 2px 8px rgba(59, 130, 246, 0.3) !important;
+            min-width: 140px !important;
         }
         
         .btn-moon:hover {
-            transform: translateY(-2px) !important;
-            box-shadow: 0 6px 20px rgba(59, 130, 246, 0.6) !important;
+            background: #2563eb !important;
+            transform: translateY(-1px) !important;
+            box-shadow: 0 4px 12px rgba(59, 130, 246, 0.5) !important;
         }
         
         /* SEND BUTTON - LEGACY (KEPT FOR COMPATIBILITY) */
@@ -1415,23 +1507,54 @@ def build_gradio_app(llm, vectorstore, databases, db_descriptions, router_chain,
             transform: translateY(0px) !important;
         }
         
-        /* SQL CODE PREVIEW */
-        .sql-glass {
-            background: rgba(0,0,0,0.25) !important;
+        /* SQL CODE PREVIEW - FORCE OVERRIDE GRADIO STYLES */
+        .sql-glass,
+        .sql-glass.svelte-1p9262q,
+        .gr-group.sql-glass,
+        div[class*="sql-glass"],
+        .sql-glass > *,
+        .sql-glass .styler {
+            background: rgba(0,0,0,0.5) !important;
             backdrop-filter: blur(16px) !important;
             border: 1px solid rgba(255,255,255,0.1) !important;
             border-radius: 1rem !important;
             padding: 1.5rem !important;
-            margin: 1rem 0 !important;
-            box-shadow: 0 8px 32px rgba(0,0,0,0.3) !important;
+            margin: 1rem auto !important;
+            max-width: 56rem !important;
+            box-shadow: none !important;
             min-height: 250px !important;
+        }
+        
+        /* OVERRIDE SVELTE GRADIO GROUP CLASSES */
+        .svelte-1p9262q,
+        div.svelte-1p9262q,
+        .gr-group.svelte-1p9262q,
+        [class*="svelte-"].sql-glass {
+            background: rgba(0,0,0,0.5) !important;
+            backdrop-filter: blur(16px) !important;
+            border: 1px solid rgba(255,255,255,0.1) !important;
         }
         
         /* FORCE CODE COMPONENT TRANSPARENCY */
         .code-wrap, .code-wrap > div,
         pre, pre > code {
-            background: rgba(30, 41, 59, 0.5) !important;
-            backdrop-filter: blur(16px) !important;
+            background: transparent !important;
+            backdrop-filter: none !important;
+        }
+        
+        /* CODE EDITOR BACKGROUND */
+        [class*="code"], [class*="Code"],
+        div[data-testid*="code"] {
+            background: rgba(0,0,0,0.15) !important;
+        }
+        
+        /* SQL BUTTON ROW ALIGNMENT */
+        .sql-button-row {
+            display: flex !important;
+            align-items: center !important;
+            gap: 1rem !important;
+            margin-top: 1rem !important;
+            justify-content: space-between !important;
         }
         
         /* QUICK ACTIONS - PERFECT CIRCLES */
@@ -1605,7 +1728,7 @@ def build_gradio_app(llm, vectorstore, databases, db_descriptions, router_chain,
         gr.HTML(f"""
         {custom_css}
         <div class="moon-header">
-            <h1><span class="sparkle-icon">✨</span> Get your queries instantaneously.</h1>
+            <h1>Get your queries instantaneously.</h1>
             <p>Powered by OpenAI {OPENAI_MODEL if USE_OPENAI else 'Gemini ' + GEMINI_MODEL} | {len(databases)} Databases Ready</p>
             <div class="stats-badges">
                 <span class="badge badge-blue">Auto-detected Database</span>
@@ -1679,11 +1802,10 @@ def build_gradio_app(llm, vectorstore, databases, db_descriptions, router_chain,
                         show_label=False
                     )
                     
-                    with gr.Row():
-                        copy_btn = gr.Button("Copy SQL", elem_classes="btn-outline")
-                        regenerate_btn = gr.Button("Regenerate", elem_classes="btn-outline")
-                        run_query_btn = gr.Button("Run Query", variant="primary", elem_classes="btn-moon")
-                        save_correction_btn = gr.Button("Save Improvement", elem_classes="btn-outline")
+                    with gr.Row(elem_classes="sql-button-row"):
+                        regenerate_btn = gr.Button("Regenerate", elem_classes="btn-outline", scale=1)
+                        run_query_btn = gr.Button("", elem_classes="run-query-send", scale=0, min_width=48, size="sm")
+                        save_correction_btn = gr.Button("Save Improvement", elem_classes="btn-outline", scale=1)
                 
                 correction_status = gr.Markdown("", visible=False)
                 query_results = gr.HTML("", visible=False)
@@ -1725,7 +1847,7 @@ def build_gradio_app(llm, vectorstore, databases, db_descriptions, router_chain,
             message = message.strip()
             if not message:
                 conv_html = update_conversation_display(conv_list)
-                return "", history, gr.update(visible=False), '<div class="badge">🎯 Auto-detect mode</div>', "", current_db_id, "", "", [], "", False, conv_html, conv_list
+                return "", history, gr.update(visible=False), '<div class="badge">Auto-detect mode</div>', "", current_db_id, "", "", [], "", False, conv_html, conv_list
             
             if message.startswith("/schema"):
                 # Handle /schema or /schema <database>
@@ -1749,7 +1871,7 @@ def build_gradio_app(llm, vectorstore, databases, db_descriptions, router_chain,
                 history.append({"role": "assistant", "content": response})
                 conv_list.append(message)
                 conv_html = update_conversation_display(conv_list)
-                db_display = f'<div class="badge badge-blue">📊 {current_db_id}</div>' if current_db_id else '<div class="badge">🎯 Auto-detect mode</div>'
+                db_display = f'<div class="badge badge-blue">{current_db_id}</div>' if current_db_id else '<div class="badge">Auto-detect mode</div>'
                 return "", history, gr.update(visible=False), db_display, "", current_db_id, "", "", [], "", False, conv_html, conv_list
             
             elif message.lower().startswith("use database"):
@@ -1758,10 +1880,10 @@ def build_gradio_app(llm, vectorstore, databases, db_descriptions, router_chain,
                 if new_db_id in databases:
                     current_db_id = new_db_id
                     response = f"✅ Switched to database: **{new_db_id}**"
-                    db_display = f'<div class="badge badge-blue">📊 {new_db_id}</div>'
+                    db_display = f'<div class="badge badge-blue">{new_db_id}</div>'
                 else:
                     response = f"❌ Database '{new_db_id}' not found.\n\nAvailable: {', '.join(sorted(databases.keys())[:10])}"
-                    db_display = f'<div class="badge badge-blue">📊 {current_db_id}</div>' if current_db_id else '<div class="badge">🎯 Auto-detect mode</div>'
+                    db_display = f'<div class="badge badge-blue">{current_db_id}</div>' if current_db_id else '<div class="badge">Auto-detect mode</div>'
                 history.append({"role": "user", "content": message})
                 history.append({"role": "assistant", "content": response})
                 conv_list.append(message)
@@ -1771,7 +1893,7 @@ def build_gradio_app(llm, vectorstore, databases, db_descriptions, router_chain,
             else:
                 # Show thinking indicator
                 history.append({"role": "user", "content": message})
-                history.append({"role": "assistant", "content": "🤔 Analyzing your question and detecting database..."})
+                history.append({"role": "assistant", "content": "Analyzing your question and detecting database..."})
                 
                 # Auto-detect or predict database
                 pred_db_id = predict_db_id(router_chain, db_list, message)
@@ -1809,10 +1931,10 @@ def build_gradio_app(llm, vectorstore, databases, db_descriptions, router_chain,
                 
                 # Update history with result
                 db_badge = f'<span class="database-badge">{pred_db_id}</span>'
-                response = f"✅ **Query Generated**\n\nDatabase: {db_badge}\n\n```sql\n{sql}\n```"
+                response = f"Database: {db_badge}\n\n```sql\n{sql}\n```"
                 history[-1] = {"role": "assistant", "content": response}
                 
-                db_display = f'<div class="badge badge-blue">📊 {pred_db_id}</div>'
+                db_display = f'<div class="badge badge-blue">{pred_db_id}</div>'
                 conv_list.append(message)
                 conv_html = update_conversation_display(conv_list)
                 
@@ -1869,7 +1991,7 @@ def build_gradio_app(llm, vectorstore, databases, db_descriptions, router_chain,
             
             # Update history
             db_badge = f'<span class="database-badge">{db_id}</span>'
-            response = f"✅ **Regenerated Query**\n\nDatabase: {db_badge}\n\n```sql\n{sql}\n```"
+            response = f"Database: {db_badge}\n\n```sql\n{sql}\n```"
             history[-1] = {"role": "assistant", "content": response}
             
             return history, gr.update(value=sql, visible=True), "", sql
@@ -1888,9 +2010,9 @@ def build_gradio_app(llm, vectorstore, databases, db_descriptions, router_chain,
                 summary, df = execute_sql_and_summarize(llm, sql, db_id, databases)
                 
                 if df.empty:
-                    response = f"📊 **Query Results**\n\n{summary}\n\n*No rows returned*"
+                    response = f"**Query Results**\n\n{summary}\n\n*No rows returned*"
                 else:
-                    response = f"📊 **Query Results**\n\n{summary}\n\n**Data Preview:**\n```\n{df.head(20).to_string()}\n```\n\n✅ Total rows: {len(df)}"
+                    response = f"**Query Results**\n\n{summary}\n\n**Data Preview:**\n```\n{df.head(20).to_string()}\n```\n\nTotal rows: {len(df)}"
                 error = None
                 result = df.to_string() if not df.empty else ""
 
@@ -1981,12 +2103,6 @@ def build_gradio_app(llm, vectorstore, databases, db_descriptions, router_chain,
         save_correction_btn.click(
             save_correction,
             inputs=[current_question, sql_box, current_db_id],
-            outputs=[correction_status]
-        )
-        
-        copy_btn.click(
-            copy_sql_to_clipboard,
-            inputs=[sql_box],
             outputs=[correction_status]
         )
         
