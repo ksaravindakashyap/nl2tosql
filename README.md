@@ -114,4 +114,4 @@ MIT License
 ## Contact
 
 GitHub: @ksaravindakashyap
-Repository: github.com/ksaravindakashyap/Dbms-project
+Repository: github.com/ksaravindakashyap/nl2sql
